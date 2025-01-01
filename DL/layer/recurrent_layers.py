@@ -28,15 +28,8 @@ class RNNLayer(LayerWithWeights):
             next_h: next hidden state, of shape (N, H)
             cache: Values necessary for backpropagation, tuple
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        next_h = np.tanh(self.b + np.dot(prev_h, self.Wh) + np.dot(x, self.Wx))
+        cache = (x, prev_h, next_h)
         return next_h, cache
 
     def forward(self, x, h0):
@@ -48,15 +41,18 @@ class RNNLayer(LayerWithWeights):
         Returns:
             h: hidden states of whole sequence, of shape (N, T, H)
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        N, T, D = x.shape
+        H = h0.shape[1]
+        h = np.zeros((N, T, H))
+        self.cache = []
+        prev_h = h0
+
+        for t in range(T):
+            next_h, cache = self.forward_step(x[:, t, :], prev_h)
+            h[:, t, :] = next_h
+            self.cache.append(cache)
+            prev_h = next_h
+
         return h
 
     def backward_step(self, dnext_h, cache):
@@ -72,15 +68,13 @@ class RNNLayer(LayerWithWeights):
             dWh: gradients of weights Wh, of shape (H, H)
             db: gradients of bias b, of shape (H,)
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        x, prev_h, next_h = cache
+        dtanh = dnext_h * (1 - next_h**2)
+        db = np.sum(dtanh, axis=0)
+        dWx = np.dot(x.T, dtanh)
+        dWh = np.dot(prev_h.T, dtanh)
+        dx = np.dot(dtanh, self.Wx.T)
+        dprev_h = np.dot(dtanh, self.Wh.T)
         return dx, dprev_h, dWx, dWh, db
 
     def backward(self, dh):
@@ -97,16 +91,26 @@ class RNNLayer(LayerWithWeights):
             db: gradients of bias b, of shape (H,)
             }
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
-        self.grad = {'dx': dx, 'dh0': dh0, 'dWx': dWx, 'dWh': dWh, 'db': db}
+        N, T, H = dh.shape
+        D = self.in_size
+
+        dx = np.zeros((N, T, D))
+        dWx = np.zeros_like(self.Wx)
+        dWh = np.zeros_like(self.Wh)
+        db = np.zeros_like(self.b)
+        dprev_h_t = np.zeros((N, H))
+
+        for t in reversed(range(T)):
+            dnext_h = dh[:, t, :] + dprev_h_t
+            cache = self.cache[t]
+            dx_t, dprev_h_t, dWx_t, dWh_t, db_t = self.backward_step(dnext_h, cache)
+
+            dx[:, t, :] = dx_t
+            dWx += dWx_t
+            dWh += dWh_t
+            db += db_t
+
+        self.grad = {'dx': dx, 'dh0': dprev_h_t, 'dWx': dWx, 'dWh': dWh, 'db': db}
 
 
 class LSTMLayer(LayerWithWeights):
@@ -138,15 +142,19 @@ class LSTMLayer(LayerWithWeights):
             next_c: next cell state, of shape (N, H)
             cache: Values necessary for backpropagation, tuple
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        
+        def sigmoid(x):
+            return 1 / (1 + np.exp(-x))
+
+        A = np.dot(x, self.Wx) + np.dot(prev_h, self.Wh) + self.b
+        H = prev_h.shape[1]
+        i = sigmoid(A[:, :H])
+        f = sigmoid(A[:, H:2*H])
+        o = sigmoid(A[:, 2*H:3*H])
+        g = np.tanh(A[:, 3*H:])
+        next_c = f * prev_c + i * g
+        next_h = o * np.tanh(next_c)
+        cache = (x, prev_h, prev_c, i, f, o, g, next_c)
         return next_h, next_c, cache
 
     def forward(self, x, h0):
@@ -159,15 +167,20 @@ class LSTMLayer(LayerWithWeights):
         Returns:
             h: hidden states of whole sequence, of shape (N, T, H)
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        N, T, D = x.shape
+        H = h0.shape[1]
+        h = np.zeros((N, T, H))
+        self.cache = []
+        prev_h = h0
+        prev_c = np.zeros_like(h0)
+
+        for t in range(T):
+            next_h, next_c, cache = self.forward_step(x[:, t, :], prev_h, prev_c)
+            h[:, t, :] = next_h
+            self.cache.append(cache)
+            prev_h = next_h
+            prev_c = next_c
+
         return h
 
     def backward_step(self, dnext_h, dnext_c, cache):
@@ -186,15 +199,19 @@ class LSTMLayer(LayerWithWeights):
             dWh: gradients of weights Wh, of shape (H, 4H)
             db: gradients of bias b, of shape (4H,)
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
+        x, prev_h, prev_c, i, f, o, g, next_c = cache
+        dnext_c += dnext_h * o * (1 - np.tanh(next_c)**2)
+        di = dnext_c * g * i * (1 - i)
+        df = dnext_c * prev_c * f * (1 - f)
+        do = dnext_h * np.tanh(next_c) * o * (1 - o)
+        dg = dnext_c * i * (1 - g**2)
+        dA = np.hstack((di, df, do, dg))
+        db = np.sum(dA, axis=0)
+        dWx = np.dot(x.T, dA)
+        dWh = np.dot(prev_h.T, dA)
+        dx = np.dot(dA, self.Wx.T)
+        dprev_h = np.dot(dA, self.Wh.T)
+        dprev_c = dnext_c * f
         return dx, dprev_h, dprev_c, dWx, dWh, db
 
     def backward(self, dh):
@@ -211,13 +228,24 @@ class LSTMLayer(LayerWithWeights):
             db: gradients of bias b, of shape (4H,)
             }
         """
-        #  /$$$$$$$$ /$$$$$$ /$$       /$$
-        # | $$_____/|_  $$_/| $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$$$$     | $$  | $$      | $$
-        # | $$__/     | $$  | $$      | $$
-        # | $$        | $$  | $$      | $$
-        # | $$       /$$$$$$| $$$$$$$$| $$$$$$$$
-        # |__/      |______/|________/|________/
-        raise NotImplementedError
-        self.grad = {'dx': dx, 'dh0': dh0, 'dWx': dWx, 'dWh': dWh, 'db': db}
+        N, T, H = dh.shape
+        D = self.in_size
+
+        dx = np.zeros((N, T, D))
+        dWx = np.zeros_like(self.Wx)
+        dWh = np.zeros_like(self.Wh)
+        db = np.zeros_like(self.b)
+        dprev_h_t = np.zeros((N, H))
+        dprev_c_t = np.zeros((N, H))
+
+        for t in reversed(range(T)):
+            dnext_h = dh[:, t, :] + dprev_h_t
+            cache = self.cache[t]
+            dx_t, dprev_h_t, dprev_c_t, dWx_t, dWh_t, db_t = self.backward_step(dnext_h, dprev_c_t, cache)
+
+            dx[:, t, :] = dx_t
+            dWx += dWx_t
+            dWh += dWh_t
+            db += db_t
+
+        self.grad = {'dx': dx, 'dh0': dprev_h_t, 'dWx': dWx, 'dWh': dWh, 'db': db}
